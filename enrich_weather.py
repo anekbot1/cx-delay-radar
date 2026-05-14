@@ -14,6 +14,7 @@ import sys
 import time
 import re
 import json
+import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -116,6 +117,73 @@ def load_icao_cache():
 def save_icao_cache(cache):
     with open(ICAO_CACHE_FILE, 'w') as f:
         json.dump(cache, f, indent=2)
+
+
+# ── SQLite METAR cache ──
+
+METAR_DB_FILE = Path(__file__).parent / 'metar_cache.db'
+
+
+def init_metar_db():
+    """Create the METAR cache database and table if needed."""
+    conn = sqlite3.connect(str(METAR_DB_FILE))
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS metars (
+            station TEXT NOT NULL,
+            obs_date TEXT NOT NULL,
+            obs_hour INTEGER NOT NULL,
+            raw_metar TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            PRIMARY KEY (station, obs_date, obs_hour)
+        )
+    ''')
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_metars_station_date
+        ON metars (station, obs_date)
+    ''')
+    conn.commit()
+    return conn
+
+
+def get_cached_metars(conn, station, dates):
+    """Get cached METARs for a station and set of dates.
+    Returns dict: {(date_str, hour): raw_metar}
+    """
+    if not dates:
+        return {}
+    metars = {}
+    # Query in batches to avoid huge IN clauses
+    date_list = sorted(dates)
+    for i in range(0, len(date_list), 100):
+        batch = date_list[i:i+100]
+        placeholders = ','.join('?' * len(batch))
+        cursor = conn.execute(
+            f'SELECT obs_date, obs_hour, raw_metar FROM metars WHERE station = ? AND obs_date IN ({placeholders})',
+            [station] + batch
+        )
+        for row in cursor:
+            metars[(row[0], row[1])] = row[2]
+    return metars
+
+
+def get_cached_date_range(conn, station):
+    """Return set of dates we already have cached for a station."""
+    cursor = conn.execute(
+        'SELECT DISTINCT obs_date FROM metars WHERE station = ?',
+        [station]
+    )
+    return {row[0] for row in cursor}
+
+
+def store_metars(conn, station, metars):
+    """Store fetched METARs into the cache DB."""
+    now = datetime.utcnow().isoformat()
+    rows = [(station, date_str, hour, raw, now) for (date_str, hour), raw in metars.items()]
+    conn.executemany(
+        'INSERT OR REPLACE INTO metars (station, obs_date, obs_hour, raw_metar, fetched_at) VALUES (?, ?, ?, ?, ?)',
+        rows
+    )
+    conn.commit()
 
 
 def iata_to_icao(iata, cache):
@@ -363,22 +431,49 @@ def main():
             if sta:
                 station_dates[iata_icao_map[arr]].add(sta.strftime('%Y-%m-%d'))
 
-    # Fetch METARs per station, using date-range windows
+    # Init SQLite METAR cache
+    metar_conn = init_metar_db()
+
+    # Fetch METARs per station, checking cache first
     unique_icao = sorted(station_dates.keys())
-    print(f"\nFetching METARs for {len(unique_icao)} stations...")
+    print(f"\nLoading METARs for {len(unique_icao)} stations...")
 
     station_metars = {}  # icao -> {(date_str, hour): metar}
+    total_cached = 0
+    total_fetched = 0
+
     for i, icao in enumerate(unique_icao):
-        dates = sorted(station_dates[icao])
-        min_d = datetime.strptime(dates[0], '%Y-%m-%d')
-        max_d = datetime.strptime(dates[-1], '%Y-%m-%d') + timedelta(days=1)
-        n_days = (max_d - min_d).days
-        print(f"  [{i+1}/{len(unique_icao)}] {icao} ({n_days} days)...", end='', flush=True)
-        metars = fetch_metars_for_station(icao, min_d, max_d)
-        station_metars[icao] = metars
-        print(f" {len(metars)} obs")
-        if i < len(unique_icao) - 1:
-            time.sleep(0.5)
+        needed_dates = sorted(station_dates[icao])
+
+        # Check what we already have cached
+        cached_dates = get_cached_date_range(metar_conn, icao)
+        missing_dates = [d for d in needed_dates if d not in cached_dates]
+
+        # Load cached data
+        cached_metars = get_cached_metars(metar_conn, icao, needed_dates)
+        total_cached += len(cached_metars)
+
+        if missing_dates:
+            # Fetch only the missing date range from IEM
+            min_d = datetime.strptime(missing_dates[0], '%Y-%m-%d')
+            max_d = datetime.strptime(missing_dates[-1], '%Y-%m-%d') + timedelta(days=1)
+            n_days = (max_d - min_d).days
+            print(f"  [{i+1}/{len(unique_icao)}] {icao}: {len(cached_metars)} cached, fetching {n_days} new days...", end='', flush=True)
+            new_metars = fetch_metars_for_station(icao, min_d, max_d)
+            if new_metars:
+                store_metars(metar_conn, icao, new_metars)
+                total_fetched += len(new_metars)
+            print(f" {len(new_metars)} new obs")
+            # Merge cached + new
+            cached_metars.update(new_metars)
+            if i < len(unique_icao) - 1:
+                time.sleep(0.5)
+        else:
+            print(f"  [{i+1}/{len(unique_icao)}] {icao}: {len(cached_metars)} cached (all dates covered)")
+
+        station_metars[icao] = cached_metars
+
+    print(f"\n  Cache: {total_cached} from DB, {total_fetched} newly fetched")
 
     # Enrich each row
     print("\nEnriching flight data...")

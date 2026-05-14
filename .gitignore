@@ -3,3 +3,4 @@
 *.xls
 *.csv
 .icao_cache.json
+metar_cache.db
