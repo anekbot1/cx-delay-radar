@@ -573,7 +573,58 @@ function renderTables(threshold) {
     container.appendChild(card);
   }
 
-  // 3. Reactionary delays (previous flight caused delay)
+  // 3. Tail (DN) performance — all tails
+  const tailMap = {};
+  filteredData.forEach(r => {
+    const dn = resolveCol(r, 'equip');
+    if (!dn || dn === '-') return;
+    if (!tailMap[dn]) tailMap[dn] = { dn, total: 0, delayed: 0, dtvSum: 0, dtvCount: 0, atvSum: 0, atvCount: 0, delayCodes: {}, routes: new Set() };
+    const t = tailMap[dn];
+    t.total++;
+    const dep = resolveCol(r, 'dep'); const arr = resolveCol(r, 'arr');
+    if (dep && arr) t.routes.add(`${dep}-${arr}`);
+    const dtv = num(resolveCol(r, 'dtv'));
+    if (!isNaN(dtv)) { t.dtvSum += dtv; t.dtvCount++; }
+    if (dtv > threshold) t.delayed++;
+    const atv = num(resolveCol(r, 'atv'));
+    if (!isNaN(atv)) { t.atvSum += atv; t.atvCount++; }
+    for (let i = 1; i <= 5; i++) {
+      const code = resolveCol(r, 'dc'+i);
+      const mins = num(resolveCol(r, 'dm'+i));
+      if (code && !isNaN(mins) && mins > 0) {
+        if (!t.delayCodes[code]) t.delayCodes[code] = 0;
+        t.delayCodes[code] += mins;
+      }
+    }
+  });
+  const allTails = Object.values(tailMap).filter(t => t.total >= 1).sort((a,b) => {
+    const otpA = (a.total - a.delayed) / a.total;
+    const otpB = (b.total - b.delayed) / b.total;
+    return otpA - otpB;
+  });
+  if (allTails.length) {
+    const maxOps = Math.max(...allTails.map(t => t.total));
+    const card = document.createElement('div'); card.className = 'table-card';
+    card.style.gridColumn = '1 / -1';
+    card.innerHTML = `<h2>Tail Performance (all equipment)</h2>
+    <table><thead><tr><th>Tail (DN)</th><th>Ops</th><th>Dep OTP</th><th>Avg Dep Delay</th><th>Avg Arr Delay</th><th>Top Delay Codes</th><th>Routes</th></tr></thead>
+    <tbody>${allTails.map(t => {
+      const otp = ((t.total - t.delayed) / t.total * 100);
+      const cls = otp >= 85 ? 'badge-green' : otp >= 70 ? 'badge-amber' : 'badge-red';
+      const avgDep = t.dtvCount ? (t.dtvSum / t.dtvCount).toFixed(1) : '-';
+      const avgArr = t.atvCount ? (t.atvSum / t.atvCount).toFixed(1) : '-';
+      const topCodes = Object.entries(t.delayCodes).sort((a,b) => b[1] - a[1]).slice(0, 3).map(([c,m]) => `${c}(${m}m)`).join(', ');
+      const routeList = [...t.routes].slice(0, 5).join(', ') + (t.routes.size > 5 ? ` +${t.routes.size - 5}` : '');
+      return `<tr><td><strong>${t.dn}</strong></td><td>${t.total}</td>
+        <td><span class="badge ${cls}">${otp.toFixed(0)}%</span></td>
+        <td>${avgDep}m</td><td>${avgArr}m</td>
+        <td style="font-size:0.8rem">${topCodes || '-'}</td>
+        <td style="font-size:0.8rem">${routeList}</td></tr>`;
+    }).join('')}</tbody></table>`;
+    container.appendChild(card);
+  }
+
+  // 4. Reactionary delays (previous flight caused delay)
   const reactionary = [];
   filteredData.forEach(r => {
     const prevAtv = num(resolveCol(r, 'prevATV'));
