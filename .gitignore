@@ -2,3 +2,4 @@
 *.xlsx
 *.xls
 *.csv
+.icao_cache.json

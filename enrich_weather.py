@@ -13,6 +13,7 @@ an enriched Excel file ready for modelling.
 import sys
 import time
 import re
+import json
 from pathlib import Path
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -31,6 +32,122 @@ try:
     import pandas as pd
 except ImportError:
     sys.exit("Missing pandas: pip install pandas")
+
+
+# ── IATA to ICAO mapping (CX network + common destinations) ──
+
+IATA_TO_ICAO = {
+    # Hong Kong hub
+    'HKG': 'VHHH',
+    # Greater China
+    'PEK': 'ZBAA', 'PKX': 'ZBAD', 'PVG': 'ZSPD', 'SHA': 'ZSSS',
+    'CAN': 'ZGGG', 'SZX': 'ZGSZ', 'CTU': 'ZUUU', 'TFU': 'ZUTF',
+    'CKG': 'ZUCK', 'WUH': 'ZHHH', 'NKG': 'ZSNJ', 'HGH': 'ZSHC',
+    'XMN': 'ZSAM', 'FOC': 'ZSFZ', 'TAO': 'ZSQD', 'DLC': 'ZYTL',
+    'SHE': 'ZYTX', 'HRB': 'ZYHB', 'CSX': 'ZGHA', 'KMG': 'ZPPP',
+    'XIY': 'ZLXY', 'TSN': 'ZBTJ', 'CGO': 'ZHCC', 'HAK': 'ZJHK',
+    'NNG': 'ZGNN', 'KWE': 'ZUGY', 'KWL': 'ZGKL', 'URC': 'ZWWW',
+    'LHW': 'ZLLL', 'HET': 'ZBHH', 'ZUH': 'ZGSD', 'WNZ': 'ZSWZ',
+    'NBO': 'HKJK',
+    # Taiwan
+    'TPE': 'RCTP', 'KHH': 'RCKH', 'RMQ': 'RCMQ',
+    # Japan
+    'NRT': 'RJAA', 'HND': 'RJTT', 'KIX': 'RJBB', 'NGO': 'RJGG',
+    'FUK': 'RJFF', 'CTS': 'RJCC', 'OKA': 'ROAH',
+    # Korea
+    'ICN': 'RKSI', 'GMP': 'RKSS', 'PUS': 'RKPK',
+    # Southeast Asia
+    'SIN': 'WSSS', 'BKK': 'VTBS', 'KUL': 'WMKK', 'MNL': 'RPLL',
+    'SGN': 'VVTS', 'HAN': 'VVNB', 'DAD': 'VVDN', 'PNH': 'VDPP',
+    'RGN': 'VYYY', 'CGK': 'WIII', 'DPS': 'WADD', 'SUB': 'WARR',
+    # South Asia
+    'DEL': 'VIDP', 'BOM': 'VABB', 'MAA': 'VOMM', 'BLR': 'VOBL',
+    'HYD': 'VOHS', 'CCU': 'VECC', 'CMB': 'VCBI', 'DAC': 'VGHS',
+    'KTM': 'VNKT', 'MLE': 'VRMM',
+    # Middle East
+    'DXB': 'OMDB', 'AUH': 'OMAA', 'DOH': 'OTHH', 'BAH': 'OBBI',
+    'RUH': 'OERK', 'JED': 'OEJN', 'TLV': 'LLBG',
+    # Australia & NZ
+    'SYD': 'YSSY', 'MEL': 'YMML', 'BNE': 'YBBN', 'PER': 'YPPH',
+    'ADL': 'YPAD', 'CNS': 'YBCS', 'AKL': 'NZAA', 'CHC': 'NZCH',
+    'WLG': 'NZWN',
+    # Europe
+    'LHR': 'EGLL', 'LGW': 'EGKK', 'MAN': 'EGCC', 'CDG': 'LFPG',
+    'AMS': 'EHAM', 'FRA': 'EDDF', 'MUC': 'EDDM', 'FCO': 'LIRF',
+    'MXP': 'LIMC', 'MAD': 'LEMD', 'BCN': 'LEBL', 'ZRH': 'LSZH',
+    'VIE': 'LOWW', 'CPH': 'EKCH', 'ARN': 'ESSA', 'HEL': 'EFHK',
+    'IST': 'LTFM', 'ATH': 'LGAV', 'DUB': 'EIDW', 'BRU': 'EBBR',
+    'LIS': 'LPPT',
+    # North America
+    'JFK': 'KJFK', 'LAX': 'KLAX', 'SFO': 'KSFO', 'ORD': 'KORD',
+    'EWR': 'KEWR', 'BOS': 'KBOS', 'IAD': 'KIAD', 'DFW': 'KDFW',
+    'YVR': 'CYVR', 'YYZ': 'CYYZ',
+    # Africa
+    'JNB': 'FAOR', 'CPT': 'FACT',
+    # Pacific
+    'HNL': 'PHNL',
+    # South America
+    'GRU': 'SBGR', 'EZE': 'SAEZ', 'SCL': 'SCEL', 'BOG': 'SKBO',
+    'MEX': 'MMMX',
+    # CX regional / other
+    'CEB': 'RPVM', 'CRK': 'RPLC', 'PEN': 'WMKP', 'LGK': 'WMKL',
+    'KCH': 'WBGG', 'BKI': 'WBKK', 'BWN': 'WBSB',
+    'AFW': 'KAFW',
+}
+
+# Cache file for ICAO lookups we resolve at runtime
+ICAO_CACHE_FILE = Path(__file__).parent / '.icao_cache.json'
+
+
+def load_icao_cache():
+    if ICAO_CACHE_FILE.exists():
+        with open(ICAO_CACHE_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def save_icao_cache(cache):
+    with open(ICAO_CACHE_FILE, 'w') as f:
+        json.dump(cache, f, indent=2)
+
+
+def iata_to_icao(iata, cache):
+    """Convert IATA code to ICAO. Uses built-in map, then cache, then API fallback."""
+    iata = iata.upper().strip()
+    if iata in IATA_TO_ICAO:
+        return IATA_TO_ICAO[iata]
+    if iata in cache:
+        return cache[iata] if cache[iata] else None
+
+    # Try a heuristic: if it's already 4 chars, might be ICAO
+    if len(iata) == 4:
+        cache[iata] = iata
+        return iata
+
+    # Fallback: query IEM with common prefixes
+    # Many ICAO codes are just a prefix + IATA
+    for prefix in ['K', 'C', 'E', 'L', 'R', 'Z', 'V', 'W', 'Y', 'N', 'O', 'S', 'F', 'H', 'D']:
+        candidate = prefix + iata
+        try:
+            resp = requests.get(IEM_URL, params={
+                'station': candidate, 'data': 'metar', 'tz': 'Etc/UTC',
+                'format': 'onlycomma', 'latlon': 'no', 'elev': 'no',
+                'missing': 'empty', 'trace': 'empty', 'direct': 'no',
+                'report_type': '3',
+                'year1': 2025, 'month1': 1, 'day1': 1,
+                'year2': 2025, 'month2': 1, 'day2': 2,
+            }, timeout=15)
+            lines = resp.text.strip().split('\n')
+            if len(lines) > 1:
+                cache[iata] = candidate
+                return candidate
+        except requests.RequestException:
+            pass
+        time.sleep(0.3)
+
+    print(f"  WARNING: No ICAO code found for {iata}")
+    cache[iata] = None
+    return None
 
 
 # ── METAR parsing ──
@@ -56,7 +173,7 @@ def parse_metar(raw):
 
     # Visibility in meters (e.g., 9999, 0800) or SM (e.g., 10SM, 3SM, 1/2SM)
     m = re.search(r'\b(\d{4})\b', raw)
-    if m and m.group(1) not in raw.split()[0:2]:  # avoid matching time
+    if m and m.group(1) not in raw.split()[0:2]:
         vis_candidate = int(m.group(1))
         if vis_candidate <= 9999:
             feat['vis_m'] = vis_candidate
@@ -68,7 +185,7 @@ def parse_metar(raw):
         if m_sm.group(2):
             n, d = m_sm.group(2).split('/')
             vis += int(n) / int(d)
-        feat['vis_m'] = int(vis * 1609.34)  # convert SM to meters
+        feat['vis_m'] = int(vis * 1609.34)
 
     # Ceiling: lowest BKN or OVC layer
     for cm in re.finditer(r'(BKN|OVC)(\d{3})', raw):
@@ -114,9 +231,10 @@ def parse_metar(raw):
 
 IEM_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
 
+
 def fetch_metars_for_station(station, start_date, end_date):
     """Fetch all METARs for a station in a date range from IEM.
-    Returns dict: {(date, hour): raw_metar_string}
+    Returns dict: {(date_str, hour): raw_metar_string}
     """
     params = {
         'station': station,
@@ -128,7 +246,7 @@ def fetch_metars_for_station(station, start_date, end_date):
         'missing': 'empty',
         'trace': 'empty',
         'direct': 'no',
-        'report_type': '3',  # METAR + SPECI
+        'report_type': '3',
         'year1': start_date.year, 'month1': start_date.month, 'day1': start_date.day,
         'year2': end_date.year, 'month2': end_date.month, 'day2': end_date.day,
     }
@@ -142,33 +260,23 @@ def fetch_metars_for_station(station, start_date, end_date):
             pass
         time.sleep(2 ** attempt)
     else:
-        print(f"  WARNING: Failed to fetch METARs for {station}")
+        print(f" FAILED")
         return {}
 
-    # Parse CSV: station,valid,metar
     metars = {}
     lines = resp.text.strip().split('\n')
-    for line in lines[1:]:  # skip header
+    for line in lines[1:]:
         parts = line.split(',', 2)
         if len(parts) < 3:
             continue
         try:
             dt = datetime.strptime(parts[1].strip(), '%Y-%m-%d %H:%M')
             key = (dt.strftime('%Y-%m-%d'), dt.hour)
-            # Keep the latest METAR for each hour
             metars[key] = parts[2].strip()
         except ValueError:
             continue
 
     return metars
-
-
-def resolve_col(row, candidates, default=''):
-    """Try multiple column names, return first match."""
-    for c in candidates:
-        if c in row and row[c] is not None and str(row[c]).strip() != '':
-            return row[c]
-    return default
 
 
 def parse_datetime(val):
@@ -207,45 +315,63 @@ def main():
     if not std_col and not sta_col:
         sys.exit("Cannot find STD or STA columns")
 
-    # Collect unique station + date ranges
-    stations = set()
+    # Collect unique IATA stations
+    iata_stations = set()
     for _, row in df.iterrows():
         dep = str(row.get(dep_col, '')).strip()
         arr = str(row.get(arr_col, '')).strip()
         if dep:
-            stations.add(dep)
+            iata_stations.add(dep)
         if arr:
-            stations.add(arr)
+            iata_stations.add(arr)
 
-    # Find date range
-    dates = []
-    for col in [std_col, sta_col]:
-        if not col:
-            continue
-        for val in df[col]:
-            dt = parse_datetime(val)
-            if dt:
-                dates.append(dt)
+    # Convert IATA to ICAO
+    print(f"\nResolving {len(iata_stations)} station codes (IATA → ICAO)...")
+    icao_cache = load_icao_cache()
+    iata_icao_map = {}
+    for stn in sorted(iata_stations):
+        icao = iata_to_icao(stn, icao_cache)
+        if icao:
+            iata_icao_map[stn] = icao
+            print(f"  {stn} → {icao}")
+        else:
+            print(f"  {stn} → NOT FOUND (will skip)")
+    save_icao_cache(icao_cache)
 
-    if not dates:
-        sys.exit("Cannot parse any dates from STD/STA columns")
+    unmapped = iata_stations - set(iata_icao_map.keys())
+    if unmapped:
+        print(f"\n  WARNING: {len(unmapped)} stations unmapped: {sorted(unmapped)}")
 
-    min_date = min(dates) - timedelta(days=1)
-    max_date = max(dates) + timedelta(days=1)
+    # Build per-station date requirements (only fetch dates we need)
+    station_dates = defaultdict(set)  # icao -> set of (date_str, hour)
+    for _, row in df.iterrows():
+        dep = str(row.get(dep_col, '')).strip()
+        arr = str(row.get(arr_col, '')).strip()
+        if std_col and dep and dep in iata_icao_map:
+            std = parse_datetime(row.get(std_col))
+            if std:
+                station_dates[iata_icao_map[dep]].add(std.strftime('%Y-%m-%d'))
+        if sta_col and arr and arr in iata_icao_map:
+            sta = parse_datetime(row.get(sta_col))
+            if sta:
+                station_dates[iata_icao_map[arr]].add(sta.strftime('%Y-%m-%d'))
 
-    print(f"\nStations: {sorted(stations)}")
-    print(f"Date range: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}")
-    print(f"Fetching METARs for {len(stations)} stations...")
+    # Fetch METARs per station, using date-range windows
+    unique_icao = sorted(station_dates.keys())
+    print(f"\nFetching METARs for {len(unique_icao)} stations...")
 
-    # Fetch METARs for each station
-    station_metars = {}
-    for i, stn in enumerate(sorted(stations)):
-        print(f"  [{i+1}/{len(stations)}] Fetching {stn}...", end='', flush=True)
-        metars = fetch_metars_for_station(stn, min_date, max_date)
-        station_metars[stn] = metars
-        print(f" {len(metars)} observations")
-        if i < len(stations) - 1:
-            time.sleep(1)  # be nice to IEM
+    station_metars = {}  # icao -> {(date_str, hour): metar}
+    for i, icao in enumerate(unique_icao):
+        dates = sorted(station_dates[icao])
+        min_d = datetime.strptime(dates[0], '%Y-%m-%d')
+        max_d = datetime.strptime(dates[-1], '%Y-%m-%d') + timedelta(days=1)
+        n_days = (max_d - min_d).days
+        print(f"  [{i+1}/{len(unique_icao)}] {icao} ({n_days} days)...", end='', flush=True)
+        metars = fetch_metars_for_station(icao, min_d, max_d)
+        station_metars[icao] = metars
+        print(f" {len(metars)} obs")
+        if i < len(unique_icao) - 1:
+            time.sleep(0.5)
 
     # Enrich each row
     print("\nEnriching flight data...")
@@ -255,7 +381,6 @@ def main():
         'has_rain', 'has_ts', 'has_snow', 'has_fog', 'has_cb', 'has_tcu'
     ]
 
-    # Create new columns
     for prefix in ['dep_wx_', 'arr_wx_']:
         for feat in wx_features:
             df[prefix + feat] = None
@@ -266,11 +391,12 @@ def main():
     for idx, row in df.iterrows():
         # Departure weather
         dep = str(row.get(dep_col, '')).strip()
-        if std_col and dep:
+        if std_col and dep and dep in iata_icao_map:
+            icao = iata_icao_map[dep]
             std = parse_datetime(row.get(std_col))
-            if std and dep in station_metars:
+            if std and icao in station_metars:
                 key = (std.strftime('%Y-%m-%d'), std.hour)
-                raw = station_metars[dep].get(key, '')
+                raw = station_metars[icao].get(key, '')
                 if raw:
                     matched_dep += 1
                     feat = parse_metar(raw)
@@ -279,11 +405,12 @@ def main():
 
         # Arrival weather
         arr = str(row.get(arr_col, '')).strip()
-        if sta_col and arr:
+        if sta_col and arr and arr in iata_icao_map:
+            icao = iata_icao_map[arr]
             sta = parse_datetime(row.get(sta_col))
-            if sta and arr in station_metars:
+            if sta and icao in station_metars:
                 key = (sta.strftime('%Y-%m-%d'), sta.hour)
-                raw = station_metars[arr].get(key, '')
+                raw = station_metars[icao].get(key, '')
                 if raw:
                     matched_arr += 1
                     feat = parse_metar(raw)
