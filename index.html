@@ -114,8 +114,8 @@ const COL = {
   flight:   ['FN', 'Flight Number'],
   dep:      ['DA', 'Departure'],
   arr:      ['AA', 'Arrival'],
-  aircraft: ['AR'],
-  equip:    ['DN', 'Equipment'],
+  aircraft: ['DN', 'Equipment'],
+  tail:     ['AR'],
   std:      ['STD (UTC)', 'STD'],
   atd:      ['ATD (UTC)', 'ATD'],
   dtv:      ['DTV'],
@@ -208,8 +208,8 @@ function buildFilters() {
     { key: 'dep', label: 'Departure' },
     { key: 'arr', label: 'Arrival' },
     { key: 'flight', label: 'Flight' },
-    { key: 'aircraft', label: 'Aircraft' },
-    { key: 'equip', label: 'Equipment (DN)' },
+    { key: 'tail', label: 'Tail (AR)' },
+    { key: 'aircraft', label: 'Aircraft Type (DN)' },
     { key: 'ssn', label: 'Season' },
   ];
   filterDefs.forEach(f => {
@@ -235,7 +235,7 @@ function buildFilters() {
 function applyFilters() {
   const threshold = num(document.getElementById('filter_threshold')?.value) || 15;
   filteredData = rawData.filter(r => {
-    const checks = ['dep', 'arr', 'flight', 'aircraft', 'equip', 'ssn'];
+    const checks = ['dep', 'arr', 'flight', 'tail', 'aircraft', 'ssn'];
     for (const k of checks) {
       const el = document.getElementById('filter_' + k);
       if (el && el.value && resolveCol(r, k) != el.value) return false;
@@ -543,16 +543,16 @@ function renderTables(threshold) {
     container.appendChild(card);
   }
 
-  // 2. Worst equipment (by DN)
+  // 2. Worst tails by avg delay (AR)
   const equipMap = {};
   filteredData.forEach(r => {
-    const dn = resolveCol(r, 'equip');
-    if (!dn) return;
-    if (!equipMap[dn]) equipMap[dn] = { dn, total: 0, delayed: 0, dtvSum: 0, dtvCount: 0 };
-    equipMap[dn].total++;
+    const tail = resolveCol(r, 'tail');
+    if (!tail || tail === '-') return;
+    if (!equipMap[tail]) equipMap[tail] = { tail, total: 0, delayed: 0, dtvSum: 0, dtvCount: 0 };
+    equipMap[tail].total++;
     const dtv = num(resolveCol(r, 'dtv'));
-    if (!isNaN(dtv)) { equipMap[dn].dtvSum += dtv; equipMap[dn].dtvCount++; }
-    if (dtv > threshold) equipMap[dn].delayed++;
+    if (!isNaN(dtv)) { equipMap[tail].dtvSum += dtv; equipMap[tail].dtvCount++; }
+    if (dtv > threshold) equipMap[tail].delayed++;
   });
   const worstEquip = Object.values(equipMap).filter(e => e.total >= 5).sort((a,b) => {
     return (b.dtvSum/b.dtvCount) - (a.dtvSum/a.dtvCount);
@@ -560,26 +560,26 @@ function renderTables(threshold) {
   if (worstEquip.length) {
     const maxAvg = Math.max(...worstEquip.map(e => e.dtvSum/e.dtvCount));
     const card = document.createElement('div'); card.className = 'table-card';
-    card.innerHTML = `<h2>Worst Equipment by Avg Delay (min 5 ops)</h2>
-    <table><thead><tr><th>Equipment (DN)</th><th>Ops</th><th>Avg Delay</th><th>OTP</th></tr></thead>
+    card.innerHTML = `<h2>Worst Tails by Avg Delay (min 5 ops)</h2>
+    <table><thead><tr><th>Tail (AR)</th><th>Ops</th><th>Avg Delay</th><th>OTP</th></tr></thead>
     <tbody>${worstEquip.map(e => {
       const avg = e.dtvSum / e.dtvCount;
       const otp = ((e.total - e.delayed) / e.total * 100);
       const cls = otp >= 85 ? 'badge-green' : otp >= 70 ? 'badge-amber' : 'badge-red';
-      return `<tr><td><strong>${e.dn}</strong></td><td>${e.total}</td>
+      return `<tr><td><strong>${e.tail}</strong></td><td>${e.total}</td>
         <td><div class="bar-cell"><div class="bar" style="width:${avg/maxAvg*100}px"></div>${avg.toFixed(1)}m</div></td>
         <td><span class="badge ${cls}">${otp.toFixed(0)}%</span></td></tr>`;
     }).join('')}</tbody></table>`;
     container.appendChild(card);
   }
 
-  // 3. Tail (DN) performance — all tails
+  // 3. Tail (AR) performance — all tails
   const tailMap = {};
   filteredData.forEach(r => {
-    const dn = resolveCol(r, 'equip');
-    if (!dn || dn === '-') return;
-    if (!tailMap[dn]) tailMap[dn] = { dn, total: 0, delayed: 0, dtvSum: 0, dtvCount: 0, atvSum: 0, atvCount: 0, delayCodes: {}, routes: new Set() };
-    const t = tailMap[dn];
+    const tail = resolveCol(r, 'tail');
+    if (!tail || tail === '-') return;
+    if (!tailMap[tail]) tailMap[tail] = { tail, total: 0, delayed: 0, dtvSum: 0, dtvCount: 0, atvSum: 0, atvCount: 0, delayCodes: {}, routes: new Set() };
+    const t = tailMap[tail];
     t.total++;
     const dep = resolveCol(r, 'dep'); const arr = resolveCol(r, 'arr');
     if (dep && arr) t.routes.add(`${dep}-${arr}`);
@@ -606,8 +606,8 @@ function renderTables(threshold) {
     const maxOps = Math.max(...allTails.map(t => t.total));
     const card = document.createElement('div'); card.className = 'table-card';
     card.style.gridColumn = '1 / -1';
-    card.innerHTML = `<h2>Tail Performance (all equipment)</h2>
-    <table><thead><tr><th>Tail (DN)</th><th>Ops</th><th>Dep OTP</th><th>Avg Dep Delay</th><th>Avg Arr Delay</th><th>Top Delay Codes</th><th>Routes</th></tr></thead>
+    card.innerHTML = `<h2>Tail Performance (all aircraft)</h2>
+    <table><thead><tr><th>Tail (AR)</th><th>Ops</th><th>Dep OTP</th><th>Avg Dep Delay</th><th>Avg Arr Delay</th><th>Top Delay Codes</th><th>Routes</th></tr></thead>
     <tbody>${allTails.map(t => {
       const otp = ((t.total - t.delayed) / t.total * 100);
       const cls = otp >= 85 ? 'badge-green' : otp >= 70 ? 'badge-amber' : 'badge-red';
@@ -615,7 +615,7 @@ function renderTables(threshold) {
       const avgArr = t.atvCount ? (t.atvSum / t.atvCount).toFixed(1) : '-';
       const topCodes = Object.entries(t.delayCodes).sort((a,b) => b[1] - a[1]).slice(0, 3).map(([c,m]) => `${c}(${m}m)`).join(', ');
       const routeList = [...t.routes].slice(0, 5).join(', ') + (t.routes.size > 5 ? ` +${t.routes.size - 5}` : '');
-      return `<tr><td><strong>${t.dn}</strong></td><td>${t.total}</td>
+      return `<tr><td><strong>${t.tail}</strong></td><td>${t.total}</td>
         <td><span class="badge ${cls}">${otp.toFixed(0)}%</span></td>
         <td>${avgDep}m</td><td>${avgArr}m</td>
         <td style="font-size:0.8rem">${topCodes || '-'}</td>
