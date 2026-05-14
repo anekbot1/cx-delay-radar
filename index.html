@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CX Delay Radar</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0f1117;
+  --card: #1a1d27;
+  --border: #2a2d3a;
+  --text: #e1e4ed;
+  --muted: #8b8fa3;
+  --accent: #6366f1;
+  --green: #22c55e;
+  --amber: #f59e0b;
+  --red: #ef4444;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+h1 { font-size: 1.5rem; font-weight: 600; }
+h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.75rem; }
+.header { padding: 1.25rem 2rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.header-right { display: flex; align-items: center; gap: 1rem; }
+#fileInfo { color: var(--muted); font-size: 0.85rem; }
+#loadBtn { background: var(--accent); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500; }
+#loadBtn:hover { opacity: 0.9; }
+
+/* Drop zone */
+#dropZone { display: flex; flex-direction: column; align-items: center; justify-content: center; height: calc(100vh - 60px); gap: 1rem; }
+#dropZone.hidden { display: none; }
+.drop-area { border: 2px dashed var(--border); border-radius: 12px; padding: 4rem 6rem; text-align: center; transition: border-color 0.2s, background 0.2s; cursor: pointer; }
+.drop-area:hover, .drop-area.dragover { border-color: var(--accent); background: rgba(99,102,241,0.05); }
+.drop-area h2 { font-size: 1.25rem; text-transform: none; letter-spacing: 0; color: var(--text); margin-bottom: 0.5rem; }
+.drop-area p { color: var(--muted); font-size: 0.9rem; }
+#fileInput { display: none; }
+
+/* Dashboard */
+#dashboard { display: none; padding: 1.5rem 2rem; }
+#dashboard.visible { display: block; }
+
+/* KPI row */
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.kpi { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; }
+.kpi-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem; }
+.kpi-value { font-size: 1.75rem; font-weight: 700; }
+.kpi-sub { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+.kpi-value.green { color: var(--green); }
+.kpi-value.amber { color: var(--amber); }
+.kpi-value.red { color: var(--red); }
+
+/* Chart grid */
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem; }
+.chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; }
+.chart-card canvas { max-height: 320px; }
+
+/* Tables */
+.table-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem; }
+.table-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
+td { padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(42,45,58,0.5); }
+tr:hover { background: rgba(99,102,241,0.04); }
+.bar-cell { display: flex; align-items: center; gap: 0.5rem; }
+.bar { height: 6px; border-radius: 3px; background: var(--accent); }
+.badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; }
+.badge-red { background: rgba(239,68,68,0.15); color: var(--red); }
+.badge-amber { background: rgba(245,158,11,0.15); color: var(--amber); }
+.badge-green { background: rgba(34,197,94,0.15); color: var(--green); }
+
+/* Filters */
+.filters { display: flex; gap: 0.75rem; margin-bottom: 1.5rem; flex-wrap: wrap; align-items: center; }
+.filters select, .filters input { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.75rem; border-radius: 6px; font-size: 0.85rem; }
+.filters label { font-size: 0.8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>CX Delay Radar</h1>
+  <div class="header-right">
+    <span id="fileInfo"></span>
+    <button id="loadBtn" onclick="document.getElementById('fileInput').click()">Load File</button>
+  </div>
+</div>
+
+<div id="dropZone">
+  <div class="drop-area" id="dropArea">
+    <h2>Drop FOP Delay Spreadsheet</h2>
+    <p>Excel (.xlsx, .xls) or CSV</p>
+  </div>
+  <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+</div>
+
+<div id="dashboard">
+  <div class="filters" id="filters"></div>
+  <div class="kpi-row" id="kpis"></div>
+  <div class="chart-grid" id="charts"></div>
+  <div class="table-grid" id="tables"></div>
+</div>
+
+<script>
+// ── Globals ──
+let rawData = [];
+let filteredData = [];
+let charts = {};
+
+// ── Column mapping (flexible — tries multiple names) ──
+const COL = {
+  date:     ['SDD (UTC)', 'SDD', 'Service Date'],
+  airline:  ['AC'],
+  flight:   ['FN', 'Flight Number'],
+  dep:      ['DA', 'Departure'],
+  arr:      ['AA', 'Arrival'],
+  aircraft: ['AR'],
+  equip:    ['DN', 'Equipment'],
+  std:      ['STD (UTC)', 'STD'],
+  atd:      ['ATD (UTC)', 'ATD'],
+  dtv:      ['DTV'],
+  sta:      ['STA (UTC)', 'STA'],
+  ata:      ['ATA (UTC)', 'ATA'],
+  atv:      ['ATV'],
+  skdBt:    ['SKD BT'],
+  actBt:    ['ACT BT'],
+  btv:      ['BTV'],
+  tot:      ['TOT'],
+  stype:    ['STC'],
+  dc:       ['DC'],
+  dr:       ['DR'],
+  dow:      ['DOW'],
+  wk:       ['WK'],
+  mth:      ['MTH'],
+  ssn:      ['SSN'],
+  yr:       ['YR'],
+  pc:       ['PC'],
+  dc1:      ['DC1'], dg1: ['DG1'], dp1: ['DP1'], dm1: ['DM1'],
+  dc2:      ['DC2'], dg2: ['DG2'], dp2: ['DP2'], dm2: ['DM2'],
+  dc3:      ['DC3'], dg3: ['DG3'], dp3: ['DP3'], dm3: ['DM3'],
+  dc4:      ['DC4'], dg4: ['DG4'], dp4: ['DP4'], dm4: ['DM4'],
+  dc5:      ['DC5'], dg5: ['DG5'], dp5: ['DP5'], dm5: ['DM5'],
+  prevAC:   ['AC (PREV)'],
+  prevFN:   ['FN (PREV)'],
+  prevSTA:  ['STA (PREV)'],
+  prevATA:  ['ATA (PREV)'],
+  prevATV:  ['ATV (PREV)'],
+  skdGt:    ['SKD GT'], avaGt: ['AVA GT'], actGt: ['ACT GT'],
+  ft:       ['FT'], at:  ['AT'], lt: ['LT'], aet: ['AET'],
+};
+
+function resolveCol(row, key) {
+  const candidates = COL[key];
+  if (!candidates) return undefined;
+  for (const c of candidates) {
+    if (row[c] !== undefined && row[c] !== null && row[c] !== '') return row[c];
+  }
+  return undefined;
+}
+
+function num(v) {
+  if (v === undefined || v === null || v === '') return NaN;
+  const n = Number(v);
+  return n;
+}
+
+// ── File handling ──
+const dropArea = document.getElementById('dropArea');
+const fileInput = document.getElementById('fileInput');
+
+dropArea.addEventListener('click', () => fileInput.click());
+dropArea.addEventListener('dragover', e => { e.preventDefault(); dropArea.classList.add('dragover'); });
+dropArea.addEventListener('dragleave', () => dropArea.classList.remove('dragover'));
+dropArea.addEventListener('drop', e => {
+  e.preventDefault();
+  dropArea.classList.remove('dragover');
+  if (e.dataTransfer.files.length) processFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => { if (e.target.files.length) processFile(e.target.files[0]); });
+
+function processFile(file) {
+  document.getElementById('fileInfo').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    rawData = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    if (!rawData.length) { alert('No data found'); return; }
+    document.getElementById('dropZone').classList.add('hidden');
+    document.getElementById('dashboard').classList.add('visible');
+    buildFilters();
+    applyFilters();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ── Filters ──
+function unique(key) {
+  const vals = new Set();
+  rawData.forEach(r => { const v = resolveCol(r, key); if (v !== undefined && v !== '') vals.add(v); });
+  return [...vals].sort();
+}
+
+function buildFilters() {
+  const container = document.getElementById('filters');
+  container.innerHTML = '';
+  const filterDefs = [
+    { key: 'dep', label: 'Departure' },
+    { key: 'arr', label: 'Arrival' },
+    { key: 'flight', label: 'Flight' },
+    { key: 'aircraft', label: 'Aircraft' },
+    { key: 'equip', label: 'Equipment (DN)' },
+    { key: 'ssn', label: 'Season' },
+  ];
+  filterDefs.forEach(f => {
+    const vals = unique(f.key);
+    if (vals.length < 2) return;
+    const sel = document.createElement('select');
+    sel.id = 'filter_' + f.key;
+    sel.innerHTML = `<option value="">All ${f.label}s</option>` +
+      vals.map(v => `<option value="${v}">${v}</option>`).join('');
+    sel.addEventListener('change', applyFilters);
+    container.appendChild(sel);
+  });
+  // Delay threshold
+  const lbl = document.createElement('label');
+  lbl.textContent = 'Delay threshold (min): ';
+  const inp = document.createElement('input');
+  inp.type = 'number'; inp.id = 'filter_threshold'; inp.value = '15'; inp.min = '0'; inp.style.width = '60px';
+  inp.addEventListener('change', applyFilters);
+  lbl.appendChild(inp);
+  container.appendChild(lbl);
+}
+
+function applyFilters() {
+  const threshold = num(document.getElementById('filter_threshold')?.value) || 15;
+  filteredData = rawData.filter(r => {
+    const checks = ['dep', 'arr', 'flight', 'aircraft', 'equip', 'ssn'];
+    for (const k of checks) {
+      const el = document.getElementById('filter_' + k);
+      if (el && el.value && resolveCol(r, k) != el.value) return false;
+    }
+    return true;
+  });
+  render(threshold);
+}
+
+// ── Rendering ──
+function render(threshold) {
+  renderKPIs(threshold);
+  renderCharts(threshold);
+  renderTables(threshold);
+}
+
+function renderKPIs(threshold) {
+  const container = document.getElementById('kpis');
+  const total = filteredData.length;
+  if (!total) { container.innerHTML = '<div class="kpi"><div class="kpi-value">No data</div></div>'; return; }
+
+  const delays = filteredData.filter(r => num(resolveCol(r, 'dtv')) > threshold);
+  const depOtp = ((total - delays.length) / total * 100);
+
+  const arrDelays = filteredData.filter(r => num(resolveCol(r, 'atv')) > threshold);
+  const arrOtp = ((total - arrDelays.length) / total * 100);
+
+  const dtvVals = filteredData.map(r => num(resolveCol(r, 'dtv'))).filter(n => !isNaN(n));
+  const avgDtv = dtvVals.length ? (dtvVals.reduce((a,b) => a+b, 0) / dtvVals.length) : 0;
+
+  const atvVals = filteredData.map(r => num(resolveCol(r, 'atv'))).filter(n => !isNaN(n));
+  const avgAtv = atvVals.length ? (atvVals.reduce((a,b) => a+b, 0) / atvVals.length) : 0;
+
+  const totVals = filteredData.map(r => num(resolveCol(r, 'tot'))).filter(n => !isNaN(n));
+  const totalDelayMin = totVals.reduce((a,b) => a+b, 0);
+
+  function otpClass(v) { return v >= 85 ? 'green' : v >= 70 ? 'amber' : 'red'; }
+
+  container.innerHTML = `
+    <div class="kpi"><div class="kpi-label">Total Flights</div><div class="kpi-value">${total.toLocaleString()}</div></div>
+    <div class="kpi"><div class="kpi-label">Dep OTP (${threshold}min)</div><div class="kpi-value ${otpClass(depOtp)}">${depOtp.toFixed(1)}%</div><div class="kpi-sub">${delays.length} delayed</div></div>
+    <div class="kpi"><div class="kpi-label">Arr OTP (${threshold}min)</div><div class="kpi-value ${otpClass(arrOtp)}">${arrOtp.toFixed(1)}%</div><div class="kpi-sub">${arrDelays.length} delayed</div></div>
+    <div class="kpi"><div class="kpi-label">Avg Dep Variance</div><div class="kpi-value">${avgDtv.toFixed(1)}<span style="font-size:0.9rem">min</span></div></div>
+    <div class="kpi"><div class="kpi-label">Avg Arr Variance</div><div class="kpi-value">${avgAtv.toFixed(1)}<span style="font-size:0.9rem">min</span></div></div>
+    <div class="kpi"><div class="kpi-label">Total Delay</div><div class="kpi-value">${Math.round(totalDelayMin / 60).toLocaleString()}<span style="font-size:0.9rem">hrs</span></div><div class="kpi-sub">${totalDelayMin.toLocaleString()} min</div></div>
+  `;
+}
+
+function destroyCharts() {
+  Object.values(charts).forEach(c => c.destroy());
+  charts = {};
+}
+
+function makeCanvas(id) {
+  const canvas = document.createElement('canvas');
+  canvas.id = id;
+  return canvas;
+}
+
+const CHART_COLORS = ['#6366f1','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899','#14b8a6','#a855f7'];
+
+function renderCharts(threshold) {
+  destroyCharts();
+  const container = document.getElementById('charts');
+  container.innerHTML = '';
+
+  // 1. Delay codes breakdown
+  const delayCodes = {};
+  filteredData.forEach(r => {
+    for (let i = 1; i <= 5; i++) {
+      const code = resolveCol(r, 'dc'+i);
+      const mins = num(resolveCol(r, 'dm'+i));
+      if (code && !isNaN(mins) && mins > 0) {
+        if (!delayCodes[code]) delayCodes[code] = { count: 0, mins: 0 };
+        delayCodes[code].count++;
+        delayCodes[code].mins += mins;
+      }
+    }
+  });
+  const topCodes = Object.entries(delayCodes).sort((a,b) => b[1].mins - a[1].mins).slice(0, 15);
+  if (topCodes.length) {
+    const card = document.createElement('div'); card.className = 'chart-card';
+    card.innerHTML = '<h2>Top Delay Codes (by minutes)</h2>';
+    const canvas = makeCanvas('chartDelayCodes'); card.appendChild(canvas);
+    container.appendChild(card);
+    charts.delayCodes = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: topCodes.map(c => c[0]),
+        datasets: [{
+          label: 'Total Minutes',
+          data: topCodes.map(c => c[1].mins),
+          backgroundColor: '#6366f1',
+          borderRadius: 4,
+        }, {
+          label: 'Occurrences',
+          data: topCodes.map(c => c[1].count),
+          backgroundColor: '#22c55e',
+          borderRadius: 4,
+        }]
+      },
+      options: chartOpts('Delay Code')
+    });
+  }
+
+  // 2. Delay groups breakdown
+  const delayGroups = {};
+  filteredData.forEach(r => {
+    for (let i = 1; i <= 5; i++) {
+      const grp = resolveCol(r, 'dg'+i);
+      const mins = num(resolveCol(r, 'dm'+i));
+      if (grp && !isNaN(mins) && mins > 0) {
+        if (!delayGroups[grp]) delayGroups[grp] = 0;
+        delayGroups[grp] += mins;
+      }
+    }
+  });
+  const grpEntries = Object.entries(delayGroups).sort((a,b) => b[1] - a[1]);
+  if (grpEntries.length) {
+    const card = document.createElement('div'); card.className = 'chart-card';
+    card.innerHTML = '<h2>Delay by Group (minutes)</h2>';
+    const canvas = makeCanvas('chartDelayGroups'); card.appendChild(canvas);
+    container.appendChild(card);
+    charts.delayGroups = new Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels: grpEntries.map(g => g[0]),
+        datasets: [{ data: grpEntries.map(g => g[1]), backgroundColor: CHART_COLORS }]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'right', labels: { color: '#8b8fa3' } } } }
+    });
+  }
+
+  // 3. OTP by day of week
+  const dowMap = {};
+  filteredData.forEach(r => {
+    const dow = resolveCol(r, 'dow');
+    if (!dow && dow !== 0) return;
+    if (!dowMap[dow]) dowMap[dow] = { total: 0, delayed: 0 };
+    dowMap[dow].total++;
+    if (num(resolveCol(r, 'dtv')) > threshold) dowMap[dow].delayed++;
+  });
+  const dowOrder = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun','1','2','3','4','5','6','7'];
+  const dowKeys = Object.keys(dowMap).sort((a,b) => dowOrder.indexOf(a) - dowOrder.indexOf(b));
+  if (dowKeys.length > 1) {
+    const card = document.createElement('div'); card.className = 'chart-card';
+    card.innerHTML = '<h2>Departure OTP by Day of Week</h2>';
+    const canvas = makeCanvas('chartDow'); card.appendChild(canvas);
+    container.appendChild(card);
+    charts.dow = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: dowKeys,
+        datasets: [{
+          label: 'OTP %',
+          data: dowKeys.map(d => ((dowMap[d].total - dowMap[d].delayed) / dowMap[d].total * 100).toFixed(1)),
+          backgroundColor: dowKeys.map(d => {
+            const otp = (dowMap[d].total - dowMap[d].delayed) / dowMap[d].total * 100;
+            return otp >= 85 ? '#22c55e' : otp >= 70 ? '#f59e0b' : '#ef4444';
+          }),
+          borderRadius: 4,
+        }]
+      },
+      options: { ...chartOpts('Day'), scales: { y: { min: 0, max: 100, ticks: { color: '#8b8fa3' }, grid: { color: '#2a2d3a' } }, x: { ticks: { color: '#8b8fa3' }, grid: { display: false } } } }
+    });
+  }
+
+  // 4. OTP by month
+  const mthMap = {};
+  filteredData.forEach(r => {
+    const m = resolveCol(r, 'mth');
+    if (!m && m !== 0) return;
+    if (!mthMap[m]) mthMap[m] = { total: 0, delayed: 0, dtvSum: 0 };
+    mthMap[m].total++;
+    const dtv = num(resolveCol(r, 'dtv'));
+    if (!isNaN(dtv)) mthMap[m].dtvSum += dtv;
+    if (dtv > threshold) mthMap[m].delayed++;
+  });
+  const mthKeys = Object.keys(mthMap).sort((a,b) => num(a) - num(b));
+  if (mthKeys.length > 1) {
+    const card = document.createElement('div'); card.className = 'chart-card';
+    card.innerHTML = '<h2>Monthly OTP Trend</h2>';
+    const canvas = makeCanvas('chartMonth'); card.appendChild(canvas);
+    container.appendChild(card);
+    charts.month = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: mthKeys,
+        datasets: [{
+          label: 'OTP %',
+          data: mthKeys.map(m => ((mthMap[m].total - mthMap[m].delayed) / mthMap[m].total * 100).toFixed(1)),
+          borderColor: '#6366f1',
+          backgroundColor: 'rgba(99,102,241,0.1)',
+          fill: true,
+          tension: 0.3,
+        }, {
+          label: 'Avg Dep Variance (min)',
+          data: mthKeys.map(m => (mthMap[m].dtvSum / mthMap[m].total).toFixed(1)),
+          borderColor: '#f59e0b',
+          borderDash: [5,3],
+          yAxisID: 'y1',
+          tension: 0.3,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { labels: { color: '#8b8fa3' } } },
+        scales: {
+          y: { min: 0, max: 100, ticks: { color: '#8b8fa3' }, grid: { color: '#2a2d3a' }, title: { display: true, text: 'OTP %', color: '#8b8fa3' } },
+          y1: { position: 'right', ticks: { color: '#8b8fa3' }, grid: { display: false }, title: { display: true, text: 'Avg Variance (min)', color: '#8b8fa3' } },
+          x: { ticks: { color: '#8b8fa3' }, grid: { display: false } }
+        }
+      }
+    });
+  }
+
+  // 5. Delay by route (top 15)
+  const routeMap = {};
+  filteredData.forEach(r => {
+    const dep = resolveCol(r, 'dep');
+    const arr = resolveCol(r, 'arr');
+    if (!dep || !arr) return;
+    const route = `${dep}-${arr}`;
+    if (!routeMap[route]) routeMap[route] = { total: 0, delayed: 0, dtvSum: 0 };
+    routeMap[route].total++;
+    const dtv = num(resolveCol(r, 'dtv'));
+    if (!isNaN(dtv)) routeMap[route].dtvSum += dtv;
+    if (dtv > threshold) routeMap[route].delayed++;
+  });
+  const topRoutes = Object.entries(routeMap).filter(r => r[1].total >= 5).sort((a,b) => {
+    const otpA = (a[1].total - a[1].delayed) / a[1].total;
+    const otpB = (b[1].total - b[1].delayed) / b[1].total;
+    return otpA - otpB;
+  }).slice(0, 15);
+  if (topRoutes.length) {
+    const card = document.createElement('div'); card.className = 'chart-card';
+    card.innerHTML = '<h2>Worst Routes by OTP (min 5 flights)</h2>';
+    const canvas = makeCanvas('chartRoutes'); card.appendChild(canvas);
+    container.appendChild(card);
+    charts.routes = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: topRoutes.map(r => r[0]),
+        datasets: [{
+          label: 'OTP %',
+          data: topRoutes.map(r => ((r[1].total - r[1].delayed) / r[1].total * 100).toFixed(1)),
+          backgroundColor: topRoutes.map(r => {
+            const otp = (r[1].total - r[1].delayed) / r[1].total * 100;
+            return otp >= 85 ? '#22c55e' : otp >= 70 ? '#f59e0b' : '#ef4444';
+          }),
+          borderRadius: 4,
+        }]
+      },
+      options: { indexAxis: 'y', ...chartOpts(''), scales: { x: { min: 0, max: 100, ticks: { color: '#8b8fa3' }, grid: { color: '#2a2d3a' } }, y: { ticks: { color: '#8b8fa3' }, grid: { display: false } } } }
+    });
+  }
+}
+
+function chartOpts(xLabel) {
+  return {
+    responsive: true,
+    plugins: { legend: { labels: { color: '#8b8fa3' } } },
+    scales: {
+      y: { ticks: { color: '#8b8fa3' }, grid: { color: '#2a2d3a' } },
+      x: { ticks: { color: '#8b8fa3' }, grid: { display: false }, title: xLabel ? { display: true, text: xLabel, color: '#8b8fa3' } : {} }
+    }
+  };
+}
+
+function renderTables(threshold) {
+  const container = document.getElementById('tables');
+  container.innerHTML = '';
+
+  // 1. Worst flights (by avg departure delay)
+  const flightMap = {};
+  filteredData.forEach(r => {
+    const fn = resolveCol(r, 'flight');
+    const dep = resolveCol(r, 'dep');
+    const arr = resolveCol(r, 'arr');
+    if (!fn) return;
+    const key = `${fn}`;
+    if (!flightMap[key]) flightMap[key] = { fn, dep, arr, total: 0, delayed: 0, dtvSum: 0, dtvCount: 0, routes: new Set() };
+    flightMap[key].total++;
+    flightMap[key].routes.add(`${dep||''}-${arr||''}`);
+    const dtv = num(resolveCol(r, 'dtv'));
+    if (!isNaN(dtv)) { flightMap[key].dtvSum += dtv; flightMap[key].dtvCount++; }
+    if (dtv > threshold) flightMap[key].delayed++;
+  });
+  const worstFlights = Object.values(flightMap).filter(f => f.total >= 3).sort((a,b) => {
+    return (b.dtvSum/b.dtvCount) - (a.dtvSum/a.dtvCount);
+  }).slice(0, 20);
+  if (worstFlights.length) {
+    const maxAvg = Math.max(...worstFlights.map(f => f.dtvSum/f.dtvCount));
+    const card = document.createElement('div'); card.className = 'table-card';
+    card.innerHTML = `<h2>Worst Flights by Avg Delay (min 3 ops)</h2>
+    <table><thead><tr><th>Flight</th><th>Route(s)</th><th>Ops</th><th>Avg Delay</th><th>OTP</th><th></th></tr></thead>
+    <tbody>${worstFlights.map(f => {
+      const avg = f.dtvSum / f.dtvCount;
+      const otp = ((f.total - f.delayed) / f.total * 100);
+      const cls = otp >= 85 ? 'badge-green' : otp >= 70 ? 'badge-amber' : 'badge-red';
+      return `<tr><td><strong>${f.fn}</strong></td><td>${[...f.routes].join(', ')}</td><td>${f.total}</td>
+        <td><div class="bar-cell"><div class="bar" style="width:${avg/maxAvg*100}px"></div>${avg.toFixed(1)}m</div></td>
+        <td><span class="badge ${cls}">${otp.toFixed(0)}%</span></td><td></td></tr>`;
+    }).join('')}</tbody></table>`;
+    container.appendChild(card);
+  }
+
+  // 2. Worst equipment (by DN)
+  const equipMap = {};
+  filteredData.forEach(r => {
+    const dn = resolveCol(r, 'equip');
+    if (!dn) return;
+    if (!equipMap[dn]) equipMap[dn] = { dn, total: 0, delayed: 0, dtvSum: 0, dtvCount: 0 };
+    equipMap[dn].total++;
+    const dtv = num(resolveCol(r, 'dtv'));
+    if (!isNaN(dtv)) { equipMap[dn].dtvSum += dtv; equipMap[dn].dtvCount++; }
+    if (dtv > threshold) equipMap[dn].delayed++;
+  });
+  const worstEquip = Object.values(equipMap).filter(e => e.total >= 5).sort((a,b) => {
+    return (b.dtvSum/b.dtvCount) - (a.dtvSum/a.dtvCount);
+  }).slice(0, 20);
+  if (worstEquip.length) {
+    const maxAvg = Math.max(...worstEquip.map(e => e.dtvSum/e.dtvCount));
+    const card = document.createElement('div'); card.className = 'table-card';
+    card.innerHTML = `<h2>Worst Equipment by Avg Delay (min 5 ops)</h2>
+    <table><thead><tr><th>Equipment (DN)</th><th>Ops</th><th>Avg Delay</th><th>OTP</th></tr></thead>
+    <tbody>${worstEquip.map(e => {
+      const avg = e.dtvSum / e.dtvCount;
+      const otp = ((e.total - e.delayed) / e.total * 100);
+      const cls = otp >= 85 ? 'badge-green' : otp >= 70 ? 'badge-amber' : 'badge-red';
+      return `<tr><td><strong>${e.dn}</strong></td><td>${e.total}</td>
+        <td><div class="bar-cell"><div class="bar" style="width:${avg/maxAvg*100}px"></div>${avg.toFixed(1)}m</div></td>
+        <td><span class="badge ${cls}">${otp.toFixed(0)}%</span></td></tr>`;
+    }).join('')}</tbody></table>`;
+    container.appendChild(card);
+  }
+
+  // 3. Reactionary delays (previous flight caused delay)
+  const reactionary = [];
+  filteredData.forEach(r => {
+    const prevAtv = num(resolveCol(r, 'prevATV'));
+    const dtv = num(resolveCol(r, 'dtv'));
+    if (isNaN(prevAtv) || prevAtv <= 0) return;
+    const fn = resolveCol(r, 'flight');
+    const prevFn = resolveCol(r, 'prevFN');
+    const dep = resolveCol(r, 'dep');
+    const arr = resolveCol(r, 'arr');
+    const date = resolveCol(r, 'date');
+    reactionary.push({ date, fn, dep, arr, prevFn, prevDelay: prevAtv, ownDelay: dtv });
+  });
+  reactionary.sort((a,b) => b.prevDelay - a.prevDelay);
+  if (reactionary.length) {
+    const top = reactionary.slice(0, 20);
+    const card = document.createElement('div'); card.className = 'table-card';
+    card.innerHTML = `<h2>Reactionary Delays (Previous Flight Late)</h2>
+    <table><thead><tr><th>Date</th><th>Flight</th><th>Route</th><th>Prev Flight</th><th>Prev Late</th><th>Own Delay</th></tr></thead>
+    <tbody>${top.map(r => {
+      const d = r.date instanceof Date ? r.date.toISOString().slice(0,10) : r.date;
+      return `<tr><td>${d || ''}</td><td><strong>${r.fn || ''}</strong></td><td>${r.dep||''}-${r.arr||''}</td>
+        <td>${r.prevFn || ''}</td><td class="${r.prevDelay > 30 ? 'badge-red' : ''}">${r.prevDelay}m</td>
+        <td>${isNaN(r.ownDelay) ? '' : r.ownDelay+'m'}</td></tr>`;
+    }).join('')}</tbody></table>
+    <p style="color:var(--muted);font-size:0.8rem;margin-top:0.5rem">${reactionary.length} flights affected by late inbound</p>`;
+    container.appendChild(card);
+  }
+
+  // 4. Delay responsibility breakdown
+  const drMap = {};
+  filteredData.forEach(r => {
+    const dr = resolveCol(r, 'dr');
+    if (!dr) return;
+    if (!drMap[dr]) drMap[dr] = { count: 0, mins: 0 };
+    drMap[dr].count++;
+    const tot = num(resolveCol(r, 'tot'));
+    if (!isNaN(tot)) drMap[dr].mins += tot;
+  });
+  const drEntries = Object.entries(drMap).sort((a,b) => b[1].mins - a[1].mins);
+  if (drEntries.length) {
+    const maxMins = Math.max(...drEntries.map(d => d[1].mins));
+    const card = document.createElement('div'); card.className = 'table-card';
+    card.innerHTML = `<h2>Delay Responsibility</h2>
+    <table><thead><tr><th>Responsibility</th><th>Flights</th><th>Total Delay</th><th></th></tr></thead>
+    <tbody>${drEntries.map(([dr, v]) => {
+      return `<tr><td><strong>${dr}</strong></td><td>${v.count}</td>
+        <td><div class="bar-cell"><div class="bar" style="width:${v.mins/maxMins*120}px"></div>${v.mins}m (${(v.mins/60).toFixed(0)}h)</div></td><td></td></tr>`;
+    }).join('')}</tbody></table>`;
+    container.appendChild(card);
+  }
+}
+</script>
+</body>
+</html>
