@@ -58,8 +58,10 @@ IATA_TO_ICAO = {
     'ICN': 'RKSI', 'GMP': 'RKSS', 'PUS': 'RKPK',
     # Southeast Asia
     'SIN': 'WSSS', 'BKK': 'VTBS', 'KUL': 'WMKK', 'MNL': 'RPLL',
+    'HKT': 'VTSP', 'CNX': 'VTCC', 'USM': 'VTSM', 'HDY': 'VTSS',
     'SGN': 'VVTS', 'HAN': 'VVNB', 'DAD': 'VVDN', 'PNH': 'VDPP',
     'RGN': 'VYYY', 'CGK': 'WIII', 'DPS': 'WADD', 'SUB': 'WARR',
+    'REP': 'VDSR', 'VTE': 'VLVT', 'LPQ': 'VLLB',
     # South Asia
     'DEL': 'VIDP', 'BOM': 'VABB', 'MAA': 'VOMM', 'BLR': 'VOBL',
     'HYD': 'VOHS', 'CCU': 'VECC', 'CMB': 'VCBI', 'DAC': 'VGHS',
