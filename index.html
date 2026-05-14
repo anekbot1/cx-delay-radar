@@ -114,7 +114,8 @@ const COL = {
   flight:   ['FN', 'Flight Number'],
   dep:      ['DA', 'Departure'],
   arr:      ['AA', 'Arrival'],
-  aircraft: ['DN', 'Equipment'],
+  acLayout: ['AET'],
+  acGroup:  ['IAG'],
   tail:     ['AR'],
   std:      ['STD (UTC)', 'STD'],
   atd:      ['ATD (UTC)', 'ATD'],
@@ -146,7 +147,7 @@ const COL = {
   prevATA:  ['ATA (PREV)'],
   prevATV:  ['ATV (PREV)'],
   skdGt:    ['SKD GT'], avaGt: ['AVA GT'], actGt: ['ACT GT'],
-  ft:       ['FT'], at:  ['AT'], lt: ['LT'], aet: ['AET'],
+  ft:       ['FT'], at:  ['AT'], lt: ['LT'],
 };
 
 function resolveCol(row, key) {
@@ -208,8 +209,9 @@ function buildFilters() {
     { key: 'dep', label: 'Departure' },
     { key: 'arr', label: 'Arrival' },
     { key: 'flight', label: 'Flight' },
-    { key: 'tail', label: 'Tail (AR)' },
-    { key: 'aircraft', label: 'Aircraft Type (DN)' },
+    { key: 'tail', label: 'Tail' },
+    { key: 'acGroup', label: 'Aircraft Group' },
+    { key: 'acLayout', label: 'Aircraft Layout' },
     { key: 'ssn', label: 'Season' },
   ];
   filterDefs.forEach(f => {
@@ -235,7 +237,7 @@ function buildFilters() {
 function applyFilters() {
   const threshold = num(document.getElementById('filter_threshold')?.value) || 15;
   filteredData = rawData.filter(r => {
-    const checks = ['dep', 'arr', 'flight', 'tail', 'aircraft', 'ssn'];
+    const checks = ['dep', 'arr', 'flight', 'tail', 'acGroup', 'acLayout', 'ssn'];
     for (const k of checks) {
       const el = document.getElementById('filter_' + k);
       if (el && el.value && resolveCol(r, k) != el.value) return false;
