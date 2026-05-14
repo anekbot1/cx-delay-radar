@@ -48,6 +48,11 @@ IATA_TO_ICAO = {
     'XIY': 'ZLXY', 'TSN': 'ZBTJ', 'CGO': 'ZHCC', 'HAK': 'ZJHK',
     'NNG': 'ZGNN', 'KWE': 'ZUGY', 'KWL': 'ZGKL', 'URC': 'ZWWW',
     'LHW': 'ZLLL', 'HET': 'ZBHH', 'ZUH': 'ZGSD', 'WNZ': 'ZSWZ',
+    'NGB': 'ZSNB', 'TNA': 'ZSJN', 'SJW': 'ZBSJ', 'TYN': 'ZBYN',
+    'INC': 'ZLIC', 'XNN': 'ZLXN', 'JJN': 'ZSQZ', 'YNT': 'ZSYT',
+    'CZX': 'ZSCG', 'HFE': 'ZSOF', 'KHN': 'ZSCN', 'NTG': 'ZSNT',
+    'LYA': 'ZHLY', 'CGQ': 'ZYCC', 'MDG': 'ZYMD', 'LJG': 'ZPLJ',
+    'SYX': 'ZJSY', 'YIH': 'ZHYC', 'ZHA': 'ZGZJ', 'LXA': 'ZULS',
     'NBO': 'HKJK',
     # Taiwan
     'TPE': 'RCTP', 'KHH': 'RCKH', 'RMQ': 'RCMQ',
